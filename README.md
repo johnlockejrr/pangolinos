@@ -1,4 +1,4 @@
-# Pangolinos - PangoLine on Steroids
+# PangolinOS - PangoLine on Steroids
 
 **PangolinOS** is an enhanced fork of the original **PangoLine** tool, providing advanced features for rendering text into PDF documents and creating parallel ALTO files with precise polygon coordinates.
 
