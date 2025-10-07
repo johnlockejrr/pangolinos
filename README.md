@@ -1,6 +1,6 @@
 # Pangolinos - PangoLine on Steroids
 
-**Pangolinos** is an enhanced fork of the original **PangoLine** tool, providing advanced features for rendering text into PDF documents and creating parallel ALTO files with precise polygon coordinates.
+**PangolinOS** is an enhanced fork of the original **PangoLine** tool, providing advanced features for rendering text into PDF documents and creating parallel ALTO files with precise polygon coordinates.
 
 This project extends the original PangoLine functionality with:
 - **Exact polygon extraction** instead of rectangular bounding boxes
