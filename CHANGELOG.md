@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 2025-01-07
+## [Unreleased] - 2025-10-08
 
 ### Added
 
@@ -45,6 +45,19 @@ All notable changes to this project will be documented in this file.
 - **Added padding logic** to coordinate calculations in `render_text()` function
 
 #### Polygon Extraction System
+-
+#### Fine Contours (Aletheia‑style)
+- **Added `--use-fine-contours` mode**: two‑stage pipeline that keeps render simple (bbox ALTO) and computes fine contours during rasterize.
+- **Render (prepare only)**: `pangolinos render --use-fine-contours` emits standard bbox ALTO and normal PDFs (no special parameters here).
+- **Rasterize (contour computation)**: `pangolinos rasterize --use-fine-contours` computes a tight polygon per `TextLine` using a smearing strategy over a clean, binarized page image and writes `<Shape><Polygon>` back into ALTO.
+- **Rasterize‑only options**:
+  - `--smear-start INTEGER` – initial horizontal kernel size (px)
+  - `--smear-inc INTEGER` – increment per iteration (px)
+  - `--include-all-pixels` – bypass component selection and include all dark pixels
+  - `--padding INTEGER` – extra dilation of the final outline (px)
+- **Background‑aware workflow**: when rasterizing with `-w/-W` writing surfaces, an additional clean (no‑background) PNG is rendered internally only for contour extraction; otherwise the main page image is reused. Temporary files are cleaned up.
+- **OpenCV‑based implementation**: binarization + horizontal smearing + morphological closing + external contour extraction for a single, line‑wide envelope.
+
 - **Added `--use-polygons` option** to both render and rasterize commands for exact polygon coordinates
 - **Implemented PangoCairo-based polygon extraction** using `layout_line_path()` for accurate glyph outlines
 - **Added FreeType font resolution** with programmatic font path detection using `fc-match`
@@ -94,6 +107,24 @@ All notable changes to this project will be documented in this file.
   - Maintained proper coordinate bounds and rounding
 
 #### Polygon Extraction System
+#### Fine Contours
+- **File changes:**
+  - Created `pangoline/fine_contour_extractor.py` (OpenCV pipeline for fine contours)
+  - Updated `pangoline/cli.py`:
+    - Render: added `--use-fine-contours` (prepare mode only; no smear params here)
+    - Rasterize: added `--use-fine-contours` and options `--smear-start`, `--smear-inc`, `--include-all-pixels`, `--padding`
+  - Updated `pangoline/render.py`: uses bbox ALTO when `--use-fine-contours` is set; no extra `_nobg.pdf` is produced
+  - Updated `pangoline/rasterize.py`:
+    - Renders the main page PNG; if a background is used, also renders a clean no‑background PNG for contouring
+    - Builds a temporary pixel‑scaled ALTO for accurate ROI cropping
+    - Inserts `<Shape>/<Polygon>` if missing; matches polygons by `TextLine` ID
+    - Cleans temporary images/ALTO after processing
+- **Implementation highlights:**
+  - Strict bbox‑local processing; smearing prefers horizontal connectivity to merge words without vertical bleed
+  - Optional padding dilates final outline; supports including all pixels
+  - Robust to MultiPolygon: always selects the largest external contour per line
+- **Dependencies:** `opencv-python-headless` added in `setup.cfg`.
+
 - **File changes:**
   - Created `pangoline/polygon_extractor.py` with PangoCairo-based extraction
   - Updated `pangoline/render.py` to support polygon extraction mode
@@ -160,6 +191,21 @@ pangoline render --padding-all 1.0 --padding-left 2.0 --padding-baseline 1.5 doc
 ```
 
 #### Polygon Extraction
+pangolinos Fine Contours
+```bash
+# 1) Render (prepare bbox ALTO + PDF)
+pangolinos render --use-fine-contours -l he-il -f "Noto Serif Hebrew 18" doc.txt -O out_fine
+
+# 2) Rasterize and compute contours (with backgrounds)
+pangolinos rasterize --use-fine-contours \
+  --smear-start 100 --smear-inc 100 --padding 4 \
+  -W backgrounds.lst -O out_fine_rast out_fine/doc.0.xml
+
+# 2) Rasterize and compute contours (no backgrounds)
+pangolinos rasterize --use-fine-contours \
+  --smear-start 100 --smear-inc 100 --padding 4 \
+  -O out_fine_rast out_fine/doc.0.xml
+```
 ```bash
 # Render with polygon extraction
 pangoline render --use-polygons -l he-il -f "Shlomo Stam" document.txt --output-dir out-poly
@@ -189,5 +235,5 @@ pangoline rasterize --use-polygons out-poly/*.xml
 ---
 
 **Contributor:** [johnlockejrr](https://github.com/johnlockejrr)  
-**Date:** 2025-01-07  
+**Date:** 2025-10-08  
 **Version:** Unreleased

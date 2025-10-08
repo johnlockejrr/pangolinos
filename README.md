@@ -1,6 +1,6 @@
-# PangolinOS - PangoLine on Steroids
+# Pangolinos - PangoLine on Steroids
 
-**PangolinOS** is an enhanced fork of the original **PangoLine** tool, providing advanced features for rendering text into PDF documents and creating parallel ALTO files with precise polygon coordinates.
+**Pangolinos** is an enhanced fork of the original **PangoLine** tool, providing advanced features for rendering text into PDF documents and creating parallel ALTO files with precise polygon coordinates.
 
 This project extends the original PangoLine functionality with:
 - **Exact polygon extraction** instead of rectangular bounding boxes
@@ -127,6 +127,48 @@ Extract precise polygon coordinates instead of rectangular bounding boxes:
 
     ~> pangolinos render --use-polygons -l he-il -f "Shlomo Stam" document.txt --output-dir out-poly
     ~> pangolinos rasterize --use-polygons out-poly/*.xml
+
+#### Fine Contours (Aletheia‑style)
+Compute tight “fine contour” polygons for each TextLine starting from bounding boxes. This follows an Aletheia‑like smearing workflow over a binarized, background‑free raster while keeping your final page image (with or without background) intact.
+
+Workflow:
+
+- Render (bbox ALTO only):
+
+        ~> pangolinos render --use-fine-contours -l he-il -f "Noto Serif Hebrew 18" doc.txt -O out_fine
+
+  - Produces: `out_fine/doc.0.pdf` and `out_fine/doc.0.xml` (ALTO with bounding boxes).
+  - No special contour options here; this step prepares standard ALTO/PDF.
+
+- Rasterize and replace each line’s bbox with a fine contour polygon:
+
+        # With backgrounds
+        ~> pangolinos rasterize --use-fine-contours \
+             --smear-start 100 --smear-inc 100 --padding 4 \
+             -W backgrounds.lst -O out_fine_rast out_fine/doc.0.xml
+
+        # Without backgrounds
+        ~> pangolinos rasterize --use-fine-contours \
+             --smear-start 100 --smear-inc 100 --padding 4 \
+             -O out_fine_rast out_fine/doc.0.xml
+
+What happens under the hood:
+
+- If backgrounds are used (`-w` or `-W`), rasterize writes the final page PNG with the background and also renders a clean page PNG (no background) solely for contour extraction. If no background is used, the main page image is reused for contouring.
+- The clean image is binarized (BW), smearing is applied horizontally to merge glyphs into a single line component, and the outer contour is extracted and written back into ALTO as `<Shape><Polygon POINTS="..."/>` per `TextLine`.
+- Temporary clean/BW images are removed after processing.
+
+Options (rasterize only):
+
+- `--smear-start INTEGER`: Initial horizontal kernel (pixels) for smearing (default: 100)
+- `--smear-inc INTEGER`: Increment for the kernel (pixels) across iterations (default: 100)
+- `--include-all-pixels`: Use all dark pixels in the bbox (bypass component selection)
+- `--padding INTEGER`: Extra dilation applied to the final outline (pixels; default: 4)
+
+Notes:
+
+- Fine contours operate in pixel space during rasterization; ALTO is temporarily scaled to pixels for accurate region cropping, then polygons are written back to the output ALTO.
+- This feature requires OpenCV; `opencv-python-headless` is declared in `setup.cfg`.
 
 #### Advanced Padding Controls
 Fine-tune baselines and bounding boxes with 8 padding options:

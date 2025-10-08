@@ -1,5 +1,5 @@
 #
-# Copyright 2025 Benjamin Kiessling
+# Copyright 2025 johnlockejrr / Benjamin Kiessling
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -74,7 +74,8 @@ def _render_doc(doc, output_dir, paper_size, margins, font, language,
                 base_dir, enable_markup, random_markup,
                 random_markup_probability, skip_unrenderable, line_spacing,
                 padding_all, padding_horizontal, padding_vertical,
-                padding_left, padding_right, padding_top, padding_bottom, padding_baseline, use_polygons):
+                padding_left, padding_right, padding_top, padding_bottom, padding_baseline, 
+                use_polygons, use_fine_contours):
     from pangolinos.render import render_text
 
     with open(doc, 'r') as fp:
@@ -98,7 +99,8 @@ def _render_doc(doc, output_dir, paper_size, margins, font, language,
                     padding_top=padding_top,
                     padding_bottom=padding_bottom,
                     padding_baseline=padding_baseline,
-                    use_polygons=use_polygons)
+                    use_polygons=use_polygons,
+                    use_fine_contours=use_fine_contours)
 
 
 @cli.command('render')
@@ -172,6 +174,8 @@ def _render_doc(doc, output_dir, paper_size, margins, font, language,
               help='Padding in mm applied to left and right endpoints of baselines only.')
 @click.option('--use-polygons', is_flag=True, default=False,
               help='Extract exact polygon coordinates instead of rectangular bounding boxes.')
+@click.option('--use-fine-contours', is_flag=True, default=False,
+              help='Prepare for fine contours (excludes --use-polygons). Emits bbox ALTO and extra _nobg.pdf.')
 @click.argument('docs',
                 type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
                 nargs=-1)
@@ -196,10 +200,16 @@ def render(ctx,
            padding_bottom: Optional[float],
            padding_baseline: Optional[float],
            use_polygons: bool,
+           use_fine_contours: bool,
            docs):
     """
     Renders text files into PDF documents and creates parallel ALTO facsimiles.
     """
+    # Validation: can't use both polygon methods
+    if use_polygons and use_fine_contours:
+        raise click.BadOptionUsage('--use-polygons', 
+                                 'Cannot use both --use-polygons and --use-fine-contours. Choose one.')
+    
     output_dir.mkdir(exist_ok=True)
 
     with Pool(ctx.meta['workers'], maxtasksperchild=1000) as pool, Progress() as progress:
@@ -224,17 +234,24 @@ def render(ctx,
                                              padding_top=padding_top,
                                              padding_bottom=padding_bottom,
                                              padding_baseline=padding_baseline,
-                                             use_polygons=use_polygons), docs):
+                                             use_polygons=use_polygons,
+                                             use_fine_contours=use_fine_contours), docs):
             progress.update(render_task, total=len(docs), advance=1)
 
 
-def _rasterize_doc(inp, output_base_path, dpi, use_polygons):
+def _rasterize_doc(inp, output_base_path, dpi, use_polygons, use_fine_contours, 
+                   smear_start, smear_inc, include_all_pixels, padding):
     from pangolinos.rasterize import rasterize_document
     rasterize_document(doc=inp[0],
                        output_base_path=output_base_path,
                        writing_surface=inp[1],
                        dpi=dpi,
-                       use_polygons=use_polygons)
+                       use_polygons=use_polygons,
+                       use_fine_contours=use_fine_contours,
+                       smear_start=smear_start,
+                       smear_inc=smear_inc,
+                       include_all_pixels=include_all_pixels,
+                       padding=padding)
 
 
 @cli.command('rasterize')
@@ -264,6 +281,16 @@ def _rasterize_doc(inp, output_base_path, dpi, use_polygons):
               help='File(s) with additional paths to background images data')
 @click.option('--use-polygons', is_flag=True, default=False,
               help='Process polygon coordinates instead of rectangular bounding boxes.')
+@click.option('--use-fine-contours', is_flag=True, default=False,
+              help='Process fine contours using image processing (excludes --use-polygons).')
+@click.option('--smear-start', default=100, type=int,
+              help='Start value for smearing kernel (pixels). Only used with --use-fine-contours.')
+@click.option('--smear-inc', default=100, type=int,
+              help='Increment for smearing kernel (pixels). Only used with --use-fine-contours.')
+@click.option('--include-all-pixels', is_flag=True, default=False,
+              help='Include all black pixels inside bbox. Only used with --use-fine-contours.')
+@click.option('--padding', default=4, type=int,
+              help='Padding in pixels around final contour. Only used with --use-fine-contours.')
 @click.argument('docs',
                 type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
                 nargs=-1)
@@ -273,12 +300,22 @@ def rasterize(ctx,
               writing_surface,
               surface_files,
               use_polygons: bool,
+              use_fine_contours: bool,
+              smear_start: int,
+              smear_inc: int,
+              include_all_pixels: bool,
+              padding: int,
               docs):
     """
     Accepts ALTO XML files created with `pangolinos render`, rasterizes PDF
     files linked in them with the chosen resolution, and rewrites the physical
     coordinates in the ALTO to the rasterized pixel coordinates.
     """
+    # Validation: can't use both polygon methods
+    if use_polygons and use_fine_contours:
+        raise click.BadOptionUsage('--use-polygons', 
+                                 'Cannot use both --use-polygons and --use-fine-contours. Choose one.')
+    
     output_dir.mkdir(exist_ok=True)
 
     if not writing_surface:
@@ -302,7 +339,12 @@ def rasterize(ctx,
                              output_base_path=output_dir,
                              writing_surface=doc[1],
                              dpi=dpi,
-                             use_polygons=use_polygons)
+                             use_polygons=use_polygons,
+                             use_fine_contours=use_fine_contours,
+                             smear_start=smear_start,
+                             smear_inc=smear_inc,
+                             include_all_pixels=include_all_pixels,
+                             padding=padding)
             progress.update(rasterize_task, total=len(docs), advance=1)
 
 
