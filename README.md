@@ -39,7 +39,7 @@ Clone the repository and install in a virtual environment:
 
 Install system dependencies (Debian/Ubuntu):
 
-    ~> sudo apt-get install python3-gi python3-gi-cairo gir1.2-pango-1.0 libpango1.0-dev libcairo2-dev fontconfig
+    ~> sudo apt-get install python3-gi python3-gi-cairo gir1.2-pango-1.0 gir1.2-girepository-2.0-dev libgirepository-2.0-dev libpango1.0-dev libcairo2-dev fontconfig
 
 All Python dependencies are automatically installed via pip.
 
