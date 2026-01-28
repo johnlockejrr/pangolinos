@@ -1,5 +1,5 @@
 #
-# Copyright 2025 Benjamin Kiessling
+# Copyright 2025 johnlockejrr / Benjamin Kiessling
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import cairo
 import regex
 import logging
 import numpy as np
+import shutil
 
 gi.require_version('Pango', '1.0')
 gi.require_version('PangoCairo', '1.0')
@@ -125,7 +126,9 @@ def render_text(text: str,
                 padding_top: Optional[float] = None,
                 padding_bottom: Optional[float] = None,
                 padding_baseline: Optional[float] = None,
-                use_polygons: bool = False):
+                baseline_position: Optional[float] = None,
+                use_polygons: bool = False,
+                use_fine_contours: bool = False):
     """
     Renders (horizontal) text into a sequence of PDF files and creates parallel
     ALTO files for each page.
@@ -165,16 +168,23 @@ def render_text(text: str,
         padding_top: Padding in mm applied to top side of bounding boxes.
         padding_bottom: Padding in mm applied to bottom side of bounding boxes.
         padding_baseline: Padding in mm applied to left and right endpoints of baselines only.
+        baseline_position: Adjust baseline position vertically in mm. Positive values move baseline up, negative values move it down.
         use_polygons: If True, extract exact polygon coordinates instead of rectangular bounding boxes.
+        use_fine_contours: If True, prepare for fine contours (excludes use_polygons); render uses bbox ALTO and writes an extra _nobg.pdf per page for rasterize to consume.
 
     Raises:
         ValueError if the text contains unrenderable glyphs and
         raise_unrenderable is set to True.
+        ValueError if both use_polygons and use_fine_contours are True.
     """
+    # Validation: can't use both polygon methods
+    if use_polygons and use_fine_contours:
+        raise ValueError("Cannot use both use_polygons and use_fine_contours. Choose one.")
+    
     output_base_path = Path(output_base_path)
 
     loader = PackageLoader('pangolinos', 'templates')
-    # Choose template based on polygon mode
+    # Choose template: fine-contours uses bbox ALTO; polygons uses polygon ALTO
     template_name = 'alto-polygons.tmpl' if use_polygons else 'alto.tmpl'
     tmpl = Environment(loader=loader).get_template(template_name)
 
@@ -289,18 +299,25 @@ def render_text(text: str,
                 # line direction determines reference point of extents
                 line_dir = line.get_resolved_direction()
                 ink_extents, log_extents = line.get_extents()
-                Pango.extents_to_pixels(ink_extents)
+                # Convert extents from Pango units to points (avoid extents_to_pixels to prevent segfault)
+                ink_x_pt = Pango.units_to_double(ink_extents.x)
+                ink_y_pt = Pango.units_to_double(ink_extents.y)
+                ink_width_pt = Pango.units_to_double(ink_extents.width)
+                ink_height_pt = Pango.units_to_double(ink_extents.height)
                 bl = Pango.units_to_double(baseline - print_space_offset) + top_margin
-                top = bl + ink_extents.y
-                bottom = top + ink_extents.height
+                # Apply baseline position adjustment if specified (positive = up, negative = down)
+                if baseline_position is not None:
+                    bl -= baseline_position * _mm_point  # Subtract because positive moves up (decreases y)
+                top = bl + ink_y_pt
+                bottom = top + ink_height_pt
                 if line_dir == Pango.Direction.RTL:
-                    right = (width - right_margin) - ink_extents.x
-                    left = right - ink_extents.width
+                    right = (width - right_margin) - ink_x_pt
+                    left = right - ink_width_pt
                     lleft = (width - right_margin) - Pango.units_to_double(log_extents.x + log_extents.width)
                 elif line_dir == Pango.Direction.LTR:
-                    left = ink_extents.x + left_margin
+                    left = ink_x_pt + left_margin
                     lleft = Pango.units_to_double(log_extents.x) + left_margin
-                    right = left + ink_extents.width
+                    right = left + ink_width_pt
                 
                 # Apply padding to coordinates
                 padding_left_val = 0.0
@@ -364,36 +381,41 @@ def render_text(text: str,
                             'right': int(math.ceil(right / _mm_point))}
                 
                 # Extract polygon coordinates if requested (before rendering the line)
-            if use_polygons:
-                # Get FreeType face for the current font
-                # Get the actual font size from the layout's context
-                pango_context = layout.get_context()
-                context_font_desc = pango_context.get_font_description()
-                if context_font_desc and context_font_desc.get_size() > 0:
-                    font_size_pt = int(context_font_desc.get_size() / Pango.SCALE)
-                else:
-                    # Fallback: try to get size from the layout's font description
-                    layout_font_desc = layout.get_font_description()
-                    if layout_font_desc and layout_font_desc.get_size() > 0:
-                        font_size_pt = int(layout_font_desc.get_size() / Pango.SCALE)
+                if use_polygons:
+                    # Get FreeType face for the current font
+                    # Get the actual font size from the layout's context
+                    pango_context = layout.get_context()
+                    context_font_desc = pango_context.get_font_description()
+                    if context_font_desc and context_font_desc.get_size() > 0:
+                        font_size_pt = int(context_font_desc.get_size() / Pango.SCALE)
                     else:
-                        # Fallback: try to get size from the original font description
-                        font_size_pt = int(font_desc.get_size() / Pango.SCALE)
-                
-                # If still no size, use a reasonable default
-                if font_size_pt <= 0:
-                    font_size_pt = 12  # Default 12pt
+                        # Fallback: try to get size from the layout's font description
+                        layout_font_desc = layout.get_font_description()
+                        if layout_font_desc and layout_font_desc.get_size() > 0:
+                            font_size_pt = int(layout_font_desc.get_size() / Pango.SCALE)
+                        else:
+                            # Fallback: try to get size from the original font description
+                            font_size_pt = int(font_desc.get_size() / Pango.SCALE)
                     
-                logger.info(f"Using font size: {font_size_pt}pt for polygon extraction")
-                font_face = get_font_face(font, font_size_pt)
-                if font_face:
-                    logger.info(f"Calling extract_line_polygons for line: '{line_text}'")
-                    polygon_coords = extract_line_polygons(line, layout, lleft, bl, left_margin, top_margin, _mm_point, font_face)
-                    line_data['polygon'] = polygon_coords
-                    logger.info(f"Stored polygon with {len(polygon_coords)} points: {polygon_coords[:3]}...")
-                else:
-                    logger.warning("Could not load font face for polygon extraction")
-                    line_data['polygon'] = []
+                    # If still no size, use a reasonable default
+                    if font_size_pt <= 0:
+                        font_size_pt = 12  # Default 12pt
+                        
+                    logger.info(f"Using font size: {font_size_pt}pt for polygon extraction")
+                    font_face = get_font_face(font, font_size_pt)
+                    if font_face:
+                        logger.info(f"Calling extract_line_polygons for line: '{line_text}'")
+                        polygon_coords = extract_line_polygons(line, layout, lleft, bl, left_margin, top_margin, _mm_point, font_face)
+                        line_data['polygon'] = polygon_coords
+                        logger.info(f"Stored polygon with {len(polygon_coords)} points: {polygon_coords[:3]}...")
+                    else:
+                        logger.warning("Could not load font face for polygon extraction")
+                        line_data['polygon'] = []
+                
+                elif use_fine_contours:
+                    # For fine contours, we'll store bounding boxes now and process them later
+                    # The actual fine contour extraction will happen during rasterization
+                    line_data['polygon'] = []  # Empty for now, will be filled during rasterization
                 
                 line_splits.append(line_data)
                 
@@ -413,5 +435,7 @@ def render_text(text: str,
                                  lines=line_splits))
 
         pdf_surface.finish()
+
+        # No extra _nobg.pdf generation; rasterize will render a clean image if needed
         if line_it.at_last_line():
             break
